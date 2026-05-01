@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Resume Builder</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.development.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.development.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500&display=swap" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: #EEECEA;
+      color: #1A1A1A;
+      min-height: 100vh;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: 2px solid #D6D4D0;
+      border-top-color: #185FA5;
+      animation: spin 0.8s linear infinite;
+    }
+
+    textarea, input[type="text"] {
+      font-family: 'DM Sans', sans-serif;
+    }
+
+    button {
+      font-family: 'DM Sans', sans-serif;
+    }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #EEECEA; }
+    ::-webkit-scrollbar-thumb { background: #C5C3BF; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useRef } = React;
+
+    /* ── Colours ─────────────────────────────────────── */
+    const C = {
+      bg:           '#EEECEA',
+      surface:      '#F8F7F5',
+      white:        '#FFFFFF',
+      border:       'rgba(0,0,0,0.09)',
+      borderMd:     'rgba(0,0,0,0.16)',
+      text:         '#1A1A1A',
+      muted:        '#6B6B6B',
+      accent:       '#185FA5',
+      accentLight:  '#E8F1FB',
+      accentDark:   '#0C447C',
+      gold:         '#BA7517',
+      dangerBg:     '#FDF0F0',
+      dangerText:   '#8B1A1A',
+      dangerBorder: '#F0C0C0',
+      successBg:    '#EDF7F0',
+      successText:  '#1A6635',
+      successBorder:'#B3DFC0',
+    };
+
+    /* ── Shared styles ───────────────────────────────── */
+    const S = {
+      page:    { minHeight: '100vh', background: C.bg, fontFamily: "'DM Sans', sans-serif" },
+      wrap:    { maxWidth: '900px', margin: '0 auto', padding: '52px 24px' },
+      wrapSm:  { maxWidth: '620px', margin: '0 auto', padding: '52px 24px' },
+      wrapMd:  { maxWidth: '700px', margin: '0 auto', padding: '52px 24px' },
+      card:    { background: C.white, border: `0.5px solid ${C.border}`, borderRadius: '12px', padding: '20px 24px' },
+      label:   { fontSize: '11px', fontWeight: '500', color: C.muted, letterSpacing: '0.08em', textTransform: 'uppercase', display: 'block', marginBottom: '8px' },
+      stepTag: { fontSize: '11px', fontWeight: '500', color: C.muted, letterSpacing: '0.08em', textTransform: 'uppercase', display: 'block', marginBottom: '8px' },
+      heading: { fontFamily: "'DM Serif Display', serif", fontSize: '28px', fontWeight: '400', color: C.text, marginBottom: '8px', lineHeight: 1.25 },
+      sub:     { color: C.muted, fontSize: '14px', lineHeight: 1.65, marginBottom: '28px' },
+      input:   { width: '100%', background: C.surface, border: `0.5px solid ${C.border}`, borderRadius: '8px', padding: '10px 14px', color: C.text, fontFamily: "'DM Sans', sans-serif", fontSize: '14px', outline: 'none', resize: 'vertical', lineHeight: '1.6' },
+      err:     { padding: '12px 16px', background: C.dangerBg, border: `0.5px solid ${C.dangerBorder}`, borderRadius: '8px', color: C.dangerText, fontSize: '13px', marginBottom: '20px' },
+    };
+
+    /* ── API call — goes through Netlify proxy ───────── */
+    async function callClaude(system, messages) {
+      const res = await fetch('/api/claude', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 4096,
+          system,
+          messages,
+        }),
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`API error ${res.status}: ${errText}`);
+      }
+      const d = await res.json();
+      if (d.error) throw new Error(d.error.message || JSON.stringify(d.error));
+      const raw = d.content[0].text;
+      return raw.replace(/```json\n?|```\n?/g, '').trim();
+    }
+
+    /* ── Reusable buttons ────────────────────────────── */
+    function PrimaryBtn({ onClick, disabled, children, style = {} }) {
+      return (
+        <button
+          onClick={onClick}
+          disabled={disabled}
+          style={{
+            padding: '12px 22px',
+            background: disabled ? '#A0B8CC' : C.accent,
+            color: '#fff',
+            border: 'none',
+            borderRadius: '8px',
+            fontSize: '14px',
+            fontWeight: '500',
+            cursor: disabled ? 'not-allowed' : 'pointer',
+            transition: 'background 0.15s',
+            ...style,
+          }}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    function OutlineBtn({ onClick, children, style = {} }) {
+      return (
+        <button
+          onClick={onClick}
+          style={{
+            padding: '12px 22px',
+            background: 'transparent',
+            color: C.text,
+            border: `0.5px solid ${C.borderMd}`,
+            borderRadius: '8px',
+            fontSize: '14px',
+            fontWeight: '500',
+            cursor: 'pointer',
+            ...style,
+          }}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    /* ── Section chip used in JD + Review screens ────── */
+    function SectionChip({ section, isActive }) {
+      return (
+        <div style={{
+          background: isActive ? C.accentLight : C.white,
+          border: isActive ? `1.5px solid ${C.accent}` : `0.5px solid ${C.border}`,
+          borderRadius: '12px',
+          padding: '12px 16px',
+          transition: 'all 0.2s',
+        }}>
+          <div style={{ fontSize: '10px', fontWeight: '500', color: isActive ? C.accentDark : C.muted, letterSpacing: '0.07em', textTransform: 'uppercase', marginBottom: '3px' }}>
+            {isActive ? '▶ ' : ''}{section.name}
+          </div>
+          <div style={{ fontSize: '11px', color: C.muted, lineHeight: 1.45, overflow: 'hidden', maxHeight: isActive ? 'none' : '30px' }}>
+            {section.content ? section.content.substring(0, isActive ? 280 : 80) : ''}
+            {!isActive && section.content && section.content.length > 80 ? '…' : ''}
+          </div>
+        </div>
+      );
+    }
+
+    /* ── Loading screen ──────────────────────────────── */
+    function Spinner({ message }) {
+      return (
+        <div style={{ ...S.page, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px' }}>
+          <div className="spinner" />
+          <p style={{ color: C.muted, fontSize: '14px' }}>{message}</p>
+        </div>
+      );
+    }
+
+    /* ── Main app ────────────────────────────────────── */
+    function App() {
+      const [step,         setStep]         = useState('upload');
+      const [pdf64,        setPdf64]        = useState('');
+      const [fileName,     setFileName]     = useState('');
+      const [sections,     setSections]     = useState([]);
+      const [rawText,      setRawText]      = useState('');
+      const [jd,           setJd]           = useState('');
+      const [questions,    setQuestions]    = useState([]);
+      const [answers,      setAnswers]      = useState({});
+      const [edits,        setEdits]        = useState([]);
+      const [editIdx,      setEditIdx]      = useState(0);
+      const [finalSections,setFinalSections]= useState([]);
+      const [loading,      setLoading]      = useState(false);
+      const [loadMsg,      setLoadMsg]      = useState('');
+      const [err,          setErr]          = useState('');
+      const [drag,         setDrag]         = useState(false);
+      const fileRef = useRef();
+
+      /* File handler */
+      function handleFile(f) {
+        if (!f || !f.type.includes('pdf')) { setErr('Please upload a PDF file.'); return; }
+        setErr('');
+        setFileName(f.name);
+        const reader = new FileReader();
+        reader.onload = (e) => setPdf64(e.target.result.split(',')[1]);
+        reader.readAsDataURL(f);
+      }
+
+      /* Step 1 → parse resume */
+      async function parseResume() {
+        if (!pdf64) { setErr('Please upload your resume PDF first.'); return; }
+        setLoading(true);
+        setLoadMsg('Reading your resume...');
+        try {
+          const result = await callClaude(
+            'You are a resume parser. Extract resume content and return ONLY valid JSON with no markdown. Format: {"rawText":"complete resume text as one string","sections":[{"name":"Section Name","content":"full text content of this section, preserving bullets and line breaks"}]}. Parse all common sections: Contact/Header, Summary, Experience, Education, Skills, Certifications, Projects, etc. Return ONLY the JSON object.',
+            [{
+              role: 'user',
+              content: [
+                { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdf64 } },
+                { type: 'text', text: 'Parse this resume into sections. Return ONLY the JSON object with no markdown or extra text.' },
+              ],
+            }]
+          );
+          const parsed = JSON.parse(result);
+          setSections(parsed.sections);
+          setFinalSections(parsed.sections.map(s => ({ ...s })));
+          setRawText(parsed.rawText);
+          setStep('jd');
+        } catch (e) {
+          setErr('Could not parse your resume. Try re-exporting the PDF and uploading again.');
+          console.error(e);
+        }
+        setLoading(false);
+      }
+
+      /* Step 2 → analyze JD and generate questions */
+      async function analyzeJD() {
+        if (!jd.trim()) { setErr('Please paste the job description first.'); return; }
+        setLoading(true);
+        setLoadMsg('Analyzing job description vs. your resume...');
+        try {
+          const result = await callClaude(
+            'You are an expert ATS resume consultant. Compare a resume to a job description. Identify specific gaps where the JD requires or strongly emphasizes skills, experience, or qualifications that are absent or underrepresented in the resume. Ask targeted validating questions to surface real experience the candidate has but has not documented. Return ONLY valid JSON: {"questions":[{"id":"q1","section":"Exact Section Name","question":"specific question tied to a gap you found","context":"one sentence on why this matters for this specific role"}]}. Ask 5 to 8 focused questions. Every question must map to a real, specific gap. No vague or generic questions. Return ONLY JSON.',
+            [{ role: 'user', content: `RESUME:\n${rawText}\n\nJOB DESCRIPTION:\n${jd}\n\nReturn ONLY the JSON object.` }]
+          );
+          const parsed = JSON.parse(result);
+          setQuestions(parsed.questions);
+          const init = {};
+          parsed.questions.forEach(q => { init[q.id] = ''; });
+          setAnswers(init);
+          setStep('questions');
+        } catch (e) {
+          setErr('Analysis failed. Please try again.');
+          console.error(e);
+        }
+        setLoading(false);
+      }
+
+      /* Step 3 → generate edits from answers */
+      async function buildEdits() {
+        if (questions.some(q => !answers[q.id] || !answers[q.id].trim())) {
+          setErr('Please answer all questions before continuing.');
+          return;
+        }
+        setErr('');
+        setLoading(true);
+        setLoadMsg('Writing your tailored resume edits...');
+        try {
+          const qa = questions.map(q => `Q: ${q.question}\nA: ${answers[q.id]}`).join('\n\n');
+          const result = await callClaude(
+            "You are an expert ATS resume writer. Review a candidate's resume sections, a target job description, and the candidate's answers to gap questions. Propose targeted edits to specific sections to better align with the role. Every edit must be grounded in the candidate's confirmed experience from their answers. Use ATS keywords from the JD naturally in the rewritten content. Keep everything truthful. Return ONLY valid JSON: {\"edits\":[{\"sectionName\":\"exact section name matching the original exactly\",\"original\":\"current section content as a string\",\"proposed\":\"improved content as a string\",\"reasoning\":\"one concise sentence explaining what changed and why\"}]}. Only include sections that genuinely need changes. Return ONLY the JSON object.",
+            [{ role: 'user', content: `RESUME SECTIONS:\n${JSON.stringify(sections, null, 2)}\n\nJOB DESCRIPTION:\n${jd}\n\nCANDIDATE ANSWERS:\n${qa}\n\nReturn ONLY the JSON object.` }]
+          );
+          const parsed = JSON.parse(result);
+          setEdits(parsed.edits);
+          setEditIdx(0);
+          setStep('review');
+        } catch (e) {
+          setErr('Edit generation failed. Please try again.');
+          console.error(e);
+        }
+        setLoading(false);
+      }
+
+      /* Step 4 → approve or skip each edit */
+      function decide(approve) {
+        if (approve) {
+          const edit = edits[editIdx];
+          setFinalSections(prev =>
+            prev.map(s => s.name === edit.sectionName ? { ...s, content: edit.proposed } : s)
+          );
+        }
+        if (editIdx + 1 >= edits.length) setStep('done');
+        else setEditIdx(i => i + 1);
+      }
+
+      /* Export → jsPDF */
+      async function exportPDF() {
+        setLoading(true);
+        setLoadMsg('Generating your PDF...');
+        try {
+          if (!window.jspdf) {
+            await new Promise((resolve, reject) => {
+              const script = document.createElement('script');
+              script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+              script.onload = resolve;
+              script.onerror = reject;
+              document.head.appendChild(script);
+            });
+          }
+          const { jsPDF } = window.jspdf;
+          const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+          const mx = 58, pw = doc.internal.pageSize.width, ph = doc.internal.pageSize.height, cw = pw - mx * 2;
+          let y = mx;
+
+          function checkPage(needed = 18) {
+            if (y + needed > ph - mx) { doc.addPage(); y = mx; }
+          }
+
+          finalSections.forEach(section => {
+            checkPage(44);
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(10.5);
+            doc.setTextColor(24, 95, 165);
+            doc.text(section.name.toUpperCase(), mx, y);
+            y += 5;
+            doc.setDrawColor(186, 117, 23);
+            doc.setLineWidth(0.75);
+            doc.line(mx, y, pw - mx, y);
+            y += 13;
+
+            const lines = (section.content || '').split('\n');
+            lines.forEach(line => {
+              if (!line.trim()) { y += 4; return; }
+              checkPage(15);
+              const isBullet = /^[•\-\*\>]/.test(line.trim());
+              const text = line.trim().replace(/^[•\-\*\>]\s*/, '');
+              doc.setFont('helvetica', 'normal');
+              doc.setFontSize(10);
+              doc.setTextColor(28, 28, 28);
+              if (isBullet) {
+                doc.text('•', mx + 5, y);
+                const wrapped = doc.splitTextToSize(text, cw - 18);
+                wrapped.forEach(l => { checkPage(13); doc.text(l, mx + 14, y); y += 13; });
+              } else {
+                const wrapped = doc.splitTextToSize(line.trim(), cw);
+                wrapped.forEach(l => { checkPage(13); doc.text(l, mx, y); y += 13; });
+              }
+            });
+            y += 18;
+          });
+
+          doc.save('resume-optimized.pdf');
+        } catch (e) {
+          setErr('PDF export failed. Please try again.');
+          console.error(e);
+        }
+        setLoading(false);
+      }
+
+      /* Reset */
+      function reset() {
+        setStep('upload'); setPdf64(''); setFileName(''); setSections([]); setFinalSections([]);
+        setJd(''); setQuestions([]); setAnswers({}); setEdits([]); setEditIdx(0); setRawText(''); setErr('');
+      }
+
+      /* ── Loading ──────────────────────────────────── */
+      if (loading) return <Spinner message={loadMsg} />;
+
+      /* ── Step: Upload ─────────────────────────────── */
+      if (step === 'upload') return (
+        <div style={S.page}>
+          <div style={S.wrapSm}>
+            <div style={{ marginBottom: '44px' }}>
+              <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: '38px', fontWeight: '400', lineHeight: 1.2, marginBottom: '14px' }}>
+                Resume Builder
+              </h1>
+              <p style={{ color: C.muted, fontSize: '15px', lineHeight: 1.65 }}>
+                Upload your current resume as a PDF. We'll parse it, compare it to a job description, and walk you through ATS-optimized edits section by section.
+              </p>
+            </div>
+
+            {err && <div style={S.err}>{err}</div>}
+
+            <div
+              onClick={() => fileRef.current && fileRef.current.click()}
+              onDragOver={e => { e.preventDefault(); setDrag(true); }}
+              onDragLeave={() => setDrag(false)}
+              onDrop={e => { e.preventDefault(); setDrag(false); handleFile(e.dataTransfer.files[0]); }}
+              style={{
+                border: `1.5px dashed ${drag ? C.accent : C.borderMd}`,
+                borderRadius: '12px',
+                padding: '56px 32px',
+                textAlign: 'center',
+                cursor: 'pointer',
+                background: drag ? C.accentLight : C.white,
+                marginBottom: '16px',
+                transition: 'all 0.15s',
+              }}
+            >
+              <div style={{ fontSize: '28px', marginBottom: '12px' }}>📄</div>
+              {fileName ? (
+                <>
+                  <p style={{ color: C.successText, fontWeight: '500', fontSize: '14px', marginBottom: '4px' }}>✓ {fileName}</p>
+                  <p style={{ color: C.muted, fontSize: '12px' }}>Click or drag to replace</p>
+                </>
+              ) : (
+                <>
+                  <p style={{ fontWeight: '500', fontSize: '14px', marginBottom: '4px' }}>Drop your resume PDF here</p>
+                  <p style={{ color: C.muted, fontSize: '12px' }}>or click to browse</p>
+                </>
+              )}
+              <input ref={fileRef} type="file" accept=".pdf" style={{ display: 'none' }} onChange={e => handleFile(e.target.files[0])} />
+            </div>
+
+            <PrimaryBtn onClick={parseResume} disabled={!pdf64} style={{ width: '100%', padding: '14px', fontSize: '15px' }}>
+              Parse My Resume
+            </PrimaryBtn>
+          </div>
+        </div>
+      );
+
+      /* ── Step: JD Input ───────────────────────────── */
+      if (step === 'jd') return (
+        <div style={S.page}>
+          <div style={S.wrap}>
+            <span style={S.stepTag}>Step 2 of 4</span>
+            <h2 style={S.heading}>Add the job description</h2>
+            <p style={S.sub}>We found {sections.length} sections in your resume. Paste the full job description so we can find the gaps.</p>
+
+            {err && <div style={S.err}>{err}</div>}
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '24px' }}>
+              <div>
+                <span style={S.label}>Your Resume Sections</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {sections.map((s, i) => (
+                    <div key={i} style={{ ...S.card, padding: '12px 16px' }}>
+                      <div style={{ fontSize: '10px', fontWeight: '500', color: C.accentDark, letterSpacing: '0.07em', textTransform: 'uppercase', marginBottom: '3px' }}>{s.name}</div>
+                      <div style={{ fontSize: '11px', color: C.muted, lineHeight: 1.45, overflow: 'hidden', maxHeight: '36px' }}>
+                        {s.content ? s.content.substring(0, 90) : ''}{s.content && s.content.length > 90 ? '…' : ''}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <span style={S.label}>Job Description</span>
+                <textarea
+                  value={jd}
+                  onChange={e => { setErr(''); setJd(e.target.value); }}
+                  placeholder="Paste the full job description here..."
+                  style={{ ...S.input, height: '400px' }}
+                />
+              </div>
+            </div>
+
+            <PrimaryBtn onClick={analyzeJD} style={{ width: '100%', padding: '14px', fontSize: '15px' }}>
+              Analyze and Generate Questions
+            </PrimaryBtn>
+          </div>
+        </div>
+      );
+
+      /* ── Step: Questions ──────────────────────────── */
+      if (step === 'questions') return (
+        <div style={S.page}>
+          <div style={S.wrapMd}>
+            <span style={S.stepTag}>Step 3 of 4</span>
+            <h2 style={S.heading}>A few questions before we write</h2>
+            <p style={S.sub}>We found {questions.length} gaps between your resume and this role. Answer these so we can fill them in accurately.</p>
+
+            {err && <div style={S.err}>{err}</div>}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '28px' }}>
+              {questions.map((q, i) => (
+                <div key={q.id} style={S.card}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                    <div style={{
+                      width: '22px', height: '22px', borderRadius: '50%',
+                      background: C.accentLight, color: C.accentDark,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: '11px', fontWeight: '500', flexShrink: 0,
+                    }}>{i + 1}</div>
+                    <span style={{ fontSize: '10px', fontWeight: '500', color: C.accentDark, letterSpacing: '0.07em', textTransform: 'uppercase' }}>{q.section}</span>
+                  </div>
+                  <p style={{ fontSize: '14px', color: C.text, marginBottom: '6px', lineHeight: 1.55 }}>{q.question}</p>
+                  <p style={{ fontSize: '12px', color: C.muted, marginBottom: '12px', fontStyle: 'italic' }}>{q.context}</p>
+                  <textarea
+                    value={answers[q.id] || ''}
+                    onChange={e => { setErr(''); setAnswers(prev => ({ ...prev, [q.id]: e.target.value })); }}
+                    placeholder="Your answer..."
+                    style={{ ...S.input, height: '72px' }}
+                  />
+                </div>
+              ))}
+            </div>
+
+            <PrimaryBtn onClick={buildEdits} style={{ width: '100%', padding: '14px', fontSize: '15px' }}>
+              Generate My Resume Edits
+            </PrimaryBtn>
+          </div>
+        </div>
+      );
+
+      /* ── Step: Review edits ───────────────────────── */
+      if (step === 'review') {
+        const current = edits[editIdx];
+        return (
+          <div style={S.page}>
+            <div style={S.wrap}>
+              <span style={S.stepTag}>Step 4 of 4 · Edit {editIdx + 1} of {edits.length}</span>
+              <h2 style={S.heading}>
+                Reviewing: <span style={{ color: C.accent }}>{current ? current.sectionName : ''}</span>
+              </h2>
+              <p style={S.sub}>Approve to apply the change, or skip to keep your original. We'll move through each edit one at a time.</p>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: '24px' }}>
+                {/* Left: resume sections list */}
+                <div>
+                  <span style={S.label}>Your Resume</span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {finalSections.map((s, i) => (
+                      <SectionChip key={i} section={s} isActive={current && s.name === current.sectionName} />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Right: proposed edit */}
+                <div>
+                  <span style={S.label}>Proposed Edit</span>
+                  <div style={S.card}>
+                    <div style={{ marginBottom: '20px', padding: '12px 16px', background: C.surface, borderRadius: '8px' }}>
+                      <span style={{ fontSize: '10px', fontWeight: '500', color: C.muted, letterSpacing: '0.07em', display: 'block', marginBottom: '4px' }}>WHY THIS CHANGE</span>
+                      <p style={{ fontSize: '13px', color: C.text, lineHeight: 1.55 }}>{current ? current.reasoning : ''}</p>
+                    </div>
+
+                    <div style={{ marginBottom: '16px' }}>
+                      <span style={{ fontSize: '10px', fontWeight: '500', color: C.dangerText, letterSpacing: '0.07em', display: 'block', marginBottom: '8px' }}>ORIGINAL</span>
+                      <div style={{ background: C.dangerBg, border: `0.5px solid ${C.dangerBorder}`, borderRadius: '8px', padding: '12px 16px', fontSize: '12px', lineHeight: 1.65, color: C.text, whiteSpace: 'pre-wrap' }}>
+                        {current ? current.original : ''}
+                      </div>
+                    </div>
+
+                    <div style={{ marginBottom: '24px' }}>
+                      <span style={{ fontSize: '10px', fontWeight: '500', color: C.successText, letterSpacing: '0.07em', display: 'block', marginBottom: '8px' }}>PROPOSED</span>
+                      <div style={{ background: C.successBg, border: `0.5px solid ${C.successBorder}`, borderRadius: '8px', padding: '12px 16px', fontSize: '12px', lineHeight: 1.65, color: C.text, whiteSpace: 'pre-wrap' }}>
+                        {current ? current.proposed : ''}
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                      <OutlineBtn onClick={() => decide(false)} style={{ padding: '13px' }}>
+                        Skip this edit
+                      </OutlineBtn>
+                      <PrimaryBtn onClick={() => decide(true)} style={{ padding: '13px' }}>
+                        ✓ Approve
+                      </PrimaryBtn>
+                    </div>
+                  </div>
+
+                  {/* Progress dots */}
+                  <div style={{ display: 'flex', gap: '6px', marginTop: '16px', justifyContent: 'center' }}>
+                    {edits.map((_, i) => (
+                      <div key={i} style={{
+                        width: '7px', height: '7px', borderRadius: '50%',
+                        background: i < editIdx ? C.successText : i === editIdx ? C.accent : C.borderMd,
+                        transition: 'background 0.2s',
+                      }} />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      /* ── Step: Done ───────────────────────────────── */
+      if (step === 'done') return (
+        <div style={S.page}>
+          <div style={S.wrapMd}>
+            <div style={{ textAlign: 'center', marginBottom: '44px' }}>
+              <div style={{
+                width: '52px', height: '52px', borderRadius: '50%',
+                background: C.successBg, border: `1px solid ${C.successBorder}`,
+                margin: '0 auto 16px',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '22px', color: C.successText,
+              }}>✓</div>
+              <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: '32px', fontWeight: '400', marginBottom: '10px' }}>Your resume is ready.</h1>
+              <p style={{ color: C.muted, fontSize: '15px' }}>All edits reviewed and applied. Download your optimized resume below.</p>
+            </div>
+
+            {err && <div style={S.err}>{err}</div>}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '32px' }}>
+              {finalSections.map((s, i) => (
+                <div key={i} style={S.card}>
+                  <div style={{ fontSize: '10px', fontWeight: '500', color: C.accentDark, letterSpacing: '0.07em', textTransform: 'uppercase', marginBottom: '8px' }}>{s.name}</div>
+                  <div style={{ fontSize: '13px', color: C.muted, lineHeight: 1.65, whiteSpace: 'pre-wrap' }}>{s.content}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <PrimaryBtn onClick={exportPDF} style={{ flex: 1, padding: '14px', fontSize: '15px' }}>
+                Download as PDF
+              </PrimaryBtn>
+              <OutlineBtn onClick={reset} style={{ padding: '14px 20px' }}>
+                Start Over
+              </OutlineBtn>
+            </div>
+          </div>
+        </div>
+      );
+
+      return null;
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
